@@ -11,8 +11,6 @@
 
 Если нужен порядок app-level сборки, сначала смотрите
 [APP_COMPOSITION](./APP_COMPOSITION.md).
-Если нужен общий HTTP-контур и browser-first API, смотрите
-[HTTP](./HTTP.md) и [HTTP_FRONTEND_NOTES](./HTTP_FRONTEND_NOTES.md).
 
 ## 1. Когда веб-сокет вообще нужен
 
@@ -207,9 +205,6 @@ GET /bookings?user-id=u-alice
 2. app-level websocket слой отвечает за `Origin`, размер сообщения, лимит подписок,
    лимит соединений, idle timeout и политику закрытия соединения.
 
-Подробнее см. также [SECURITY](./SECURITY.md), [SECURE_APP](./SECURE_APP.md) и
-[GUARD](./GUARD.md).
-
 ## 9. Operational baseline
 
 Первая фаза должна быть предсказуемой и скромной.
@@ -233,8 +228,6 @@ GET /bookings?user-id=u-alice
 4. rejected subscriptions;
 5. malformed messages;
 6. закрытия по политике.
-
-Если нужен отдельный слой метрик и логов, смотрите [OBSERVABILITY](./OBSERVABILITY.md).
 
 ## 11. Ручная проверка в примере
 
