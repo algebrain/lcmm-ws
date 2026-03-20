@@ -1,134 +1,144 @@
-# WS_APP_LEVEL: руководство по сборке `lcmm-ws` на уровне приложения
+# WS_APP_LEVEL: как собирать `lcmm-ws` на уровне приложения
 
-Этот документ объясняет, как использовать `lcmm-ws` в корневой сборке
-приложения.
+Этот документ фиксирует каноническую app-level модель использования `lcmm-ws`.
 
-## Что остается за приложением
+## 1. Что остается за приложением
 
-Даже при наличии `lcmm-ws` приложение по-прежнему владеет:
+Приложение по-прежнему владеет:
 
 1. websocket endpoint;
-2. проверкой открытия соединения;
-3. правилами проверки `Origin`;
-4. проверкой входа;
-5. интеграцией с `lcmm-guard`;
-6. лимитами на сообщение и число подписок;
-7. общим жизненным циклом транспортного слоя.
+2. handshake policy;
+3. `Origin` policy;
+4. auth;
+5. `lcmm-guard` integration;
+6. transport limits;
+7. browser-facing message contract;
+8. входящим app-owned ingress event.
 
 `lcmm-ws` не забирает эти решения в библиотеку.
 
-## Что приложение создает
+## 2. Что приложение создает
 
-Обычно приложение создает:
+Канонический набор app-level сущностей:
 
 1. `hub` через `lcmm-ws.core/make-hub`;
-2. `ws-registry` через `lcmm-ws.registry/make-registry`;
-3. `transport-state` через `lcmm-ws.http-kit/make-transport`;
-4. обработчик websocket-запросов;
-5. `/ws-demo`, если нужен диагностический сценарий.
+2. `transport-state` через `lcmm-ws.http-kit/make-transport`;
+3. websocket handler;
+4. app-level подписки на `event-bus` для outgoing push;
+5. app-level publication path для `:app/external-message-received`, если есть incoming business flow.
 
-## Что получают модули
+Важно:
 
-Если приложение хочет, чтобы модуль мог сам регистрировать websocket-экспорт,
-в `deps` модуля стоит передавать:
+1. в новой рабочей модели приложение не использует `ws-registry`;
+2. в новой рабочей модели приложение не использует `bridge` как канонический путь.
 
-1. `:ws-registry`
-2. `:ws-bridge` или нужные функции для связи с общей websocket-инфраструктурой
+## 3. Канонический outgoing path
 
-Тогда модуль в `init!` может сам зарегистрировать:
+На исходящем пути приложение делает так:
 
-1. handler подписки;
-2. преобразователь своих событий в сообщения для браузера.
+1. модуль публикует доменное событие;
+2. приложение подписывается на него через `event-bus`;
+3. приложение проектирует событие в `topic + message`;
+4. приложение вызывает `lcmm-ws.core/send-to-topic!`.
 
-## Что стало короче во второй итерации
+Примерно так:
 
-Теперь приложение может не писать вручную весь однотипный ход для первой фазы.
+```clojure
+(bus/subscribe bus
+               :booking/created
+               (fn [_ envelope]
+                 (let [topic [:user (get-in envelope [:payload :user-id])]
+                       message {:type "event"
+                                :event "booking/created"
+                                :topic ["user" (get-in envelope [:payload :user-id])]
+                                :payload {...}
+                                :correlationId (:correlation-id envelope)}]
+                   (ws/send-to-topic! hub transport topic (codec/encode message)))))
+```
 
-Библиотека уже умеет:
+## 4. Канонический transport path
 
-1. разбирать `ping`, `subscribe`, `unsubscribe`;
-2. приводить тему к внутренней форме;
-3. типовым образом обрабатывать подписку;
-4. типовым образом обрабатывать отписку.
+На websocket endpoint приложение делает так:
 
-## Рекомендуемый ход обработки
+1. проверяет, можно ли открывать соединение;
+2. принимает решение по `Origin`;
+3. определяет subject сессии;
+4. открывает websocket session через transport adapter;
+5. на входящих сообщениях вызывает `lcmm-ws.protocol/parse-client-message`;
+6. для `subscribe` вызывает `lcmm-ws.flow/process-subscribe!`;
+7. для `unsubscribe` вызывает `lcmm-ws.flow/process-unsubscribe!`;
+8. для `ping` отвечает `pong`;
+9. само решает, какие ответы отправлять и какие security facts отдавать в `lcmm-guard`.
 
-На websocket endpoint:
+## 5. Как теперь выглядит authorize-subscribe
 
-1. приложение проверяет, можно ли вообще открывать соединение;
-2. приложение принимает решение по `Origin`;
-3. приложение определяет, кто открыл сессию;
-4. только после этого адаптер переводит запрос в websocket-сессию;
-5. на входящих сообщениях приложение разбирает данные и делает базовую проверку;
-6. `subscribe` проходит через `ws-registry`;
-7. разрешенная подписка попадает в `hub`;
-8. запрещенная подписка получает единый безопасный отказ.
+`process-subscribe!` вызывается не через module-level registry, а через явный app-level callback `authorize-subscribe`.
 
-На практике это обычно выглядит так:
+Пример:
 
-1. приложение вызывает `lcmm-ws.protocol/parse-client-message`;
-2. по результату вызывает:
-   - `lcmm-ws.flow/process-subscribe!`
-   - или `lcmm-ws.flow/process-unsubscribe!`
-   - или отвечает `pong`;
-3. затем приложение само решает, какие ответы отправлять и какие события
-   безопасности отдавать в `lcmm-guard`.
+```clojure
+(ws.flow/process-subscribe!
+ {:hub hub
+  :session-id session-id
+  :topic topic
+  :authorize-subscribe
+  (fn [{:keys [session topic]}]
+    {:ok? (and (= :user (first topic))
+               (= (get-in session [:subject :user-id])
+                  (second topic)))})
+  :max-subscriptions 32})
+```
 
-## Как работает `subscribe`
+Это уменьшает число промежуточных сущностей, которые должен держать в голове разработчик приложения.
 
-Рекомендуемый порядок:
+## 6. Канонический incoming path
 
-1. разобрать входящее сообщение через `lcmm-ws.protocol/parse-client-message`;
-2. передать результат в `lcmm-ws.flow/process-subscribe!`;
-3. по возвращенному результату отправить либо `subscribed`, либо безопасный
-   отказ без лишних деталей.
+Если websocket используется для входящих внешних сообщений, приложение делает так:
 
-Тем самым из приложения уходит повторяющаяся механика:
+1. принимает raw websocket message;
+2. валидирует transport envelope;
+3. нормализует message;
+4. публикует в `event-bus` app-owned ingress event `:app/external-message-received`;
+5. модуль сам подписывается на это ingress event и интерпретирует его по своей бизнес-логике.
 
-1. поиск обработчика;
-2. проверка доступа;
-3. проверка лимита;
-4. запись подписки в `hub`.
+Зафиксированный ingress payload:
 
-Но за приложением по-прежнему остаются:
+```clojure
+{:message-kind :command
+ :message-name "booking/create"
+ :payload {...}
+ :subject {:user-id "u-alice"}
+ :source {:channel :websocket
+          :transport :ws
+          :session-id "..."
+          :remote-addr "..."
+          :origin "http://localhost:3006"}
+ :correlation-id "..."
+ :received-at 1710000000}
+```
 
-1. собственные правила открытия соединения;
-2. выбор текста и кода ответа;
-3. решение, что именно считать фактом для защитного слоя.
+Важно:
 
-## Как работает `unsubscribe`
+1. приложение не публикует от своего имени доменные события `booking/*`;
+2. приложение публикует только app-owned ingress event;
+3. доменная интерпретация остается в модуле.
 
-Рекомендуемый порядок такой же:
+## 7. Что важно не делать
 
-1. разобрать входящее сообщение через `lcmm-ws.protocol/parse-client-message`;
-2. передать результат в `lcmm-ws.flow/process-unsubscribe!`;
-3. по результату отправить `unsubscribed` или молча оставить состояние без
-   изменения, если подписки уже не было.
+1. не передавать `lcmm-ws` в модульные `deps`;
+2. не регистрировать websocket-export из `module/init!`;
+3. не делать `ws-registry` и `bridge` частью канонического happy path;
+4. не смешивать app-owned ingress contract и доменные события модуля.
 
-## Как работает push событий
+## 8. Минимальный checklist
 
-Обычно ход работы такой:
+Перед запуском websocket-контура проверьте:
 
-1. модуль в `init!` регистрирует преобразователь для нужного типа события;
-2. связующий слой при получении конверта вызывает этот преобразователь;
-3. преобразователь возвращает список `topic + message`;
-4. `lcmm-ws.core/send-to-topic!` доставляет сообщение нужным сессиям.
-
-Так транспорт остается в руках приложения, а предметный смысл остается в модуле.
-
-## Что важно не делать
-
-1. не давать модулям доступ к сырому websocket-каналу;
-2. не переносить проверку `Origin` и входа в библиотеку;
-3. не делать общий транспортный слой частью модульного API;
-4. не подменять внутреннее событие модуля случайным сообщением для браузера прямо в корневой сборке,
-   если это знание должно принадлежать модулю.
-
-## Минимальные рекомендации по защите
-
-1. проверять `Origin` до открытия session;
-2. не передавать секреты в query string;
-3. каждую подписку проверять отдельно;
-4. учитывать неверные сообщения как значимый факт для защитного слоя;
-5. использовать `lcmm-guard` как общий слой защиты от злоупотреблений, а не как замену
-   собственной проверки при открытии соединения.
+1. `hub` создан;
+2. `transport-state` создан;
+3. handshake policy задана;
+4. `Origin` policy задана;
+5. auth и `lcmm-guard` integration подключены;
+6. есть app-level subscription на нужные доменные события;
+7. browser-facing message contract определен;
+8. если есть incoming business flow, определен `:app/external-message-received`.

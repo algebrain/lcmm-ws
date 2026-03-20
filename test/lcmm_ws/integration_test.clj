@@ -1,10 +1,8 @@
 (ns lcmm-ws.integration-test
   (:require [clojure.test :refer [deftest is]]
-            [lcmm-ws.bridge :as bridge]
             [lcmm-ws.codec :as codec]
             [lcmm-ws.core :as core]
             [lcmm-ws.http-kit :as ws.http-kit]
-            [lcmm-ws.registry :as registry]
             [lcmm-ws.transport :as transport]
             [org.httpkit.server :as http-kit])
   (:import [java.net URI]
@@ -37,9 +35,8 @@
            (update parts 0 keyword)
            parts)))))
 
-(deftest websocket-roundtrip-and-bridge
+(deftest websocket-roundtrip-and-app-level-delivery
   (let [hub (core/make-hub)
-        reg (registry/make-registry)
         transport-state (ws.http-kit/make-transport)
         stop-server (atom nil)
         session-id (atom nil)
@@ -81,21 +78,13 @@
         (.sendText websocket (codec/encode {:type "subscribe" :topic ["user" "u1"]}) true)
         (is (= {:type "subscribed" :topic ["user" "u1"]}
                (codec/decode (.poll queue 5 TimeUnit/SECONDS))))
-        (registry/register-event-projection!
-         reg
-         {:module :booking
-          :event-type :booking/created
-          :project (fn [{:keys [envelope]}]
-                     [{:topic [:user (get-in envelope [:payload :user-id])]
-                       :message {:type "event"
-                                 :event "booking/created"
-                                 :payload (:payload envelope)}}])})
-        (bridge/dispatch-event! {:registry reg
-                                 :hub hub
-                                 :transport (:transport transport-state)}
-                                :booking/created
-                                {:payload {:user-id "u1"
-                                           :booking-id "b1"}})
+        (core/send-to-topic! hub
+                             (:transport transport-state)
+                             [:user "u1"]
+                             (codec/encode {:type "event"
+                                            :event "booking/created"
+                                            :payload {:user-id "u1"
+                                                      :booking-id "b1"}}))
         (is (= {:type "event"
                 :event "booking/created"
                 :payload {:user-id "u1"

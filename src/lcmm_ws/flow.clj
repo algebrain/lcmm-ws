@@ -1,15 +1,13 @@
 (ns lcmm-ws.flow
   (:require [lcmm-ws.core :as core]
-            [lcmm-ws.limits :as limits]
-            [lcmm-ws.registry :as registry]))
+            [lcmm-ws.limits :as limits]))
 
 (defn process-subscribe!
-  [{:keys [hub registry session-id topic max-subscriptions]}]
+  [{:keys [hub session-id topic max-subscriptions authorize-subscribe]}]
   (let [session (core/get-session hub session-id)
-        handler (and topic (registry/find-subscription-handler registry topic))
-        auth-result (when handler
-                      ((:authorize-subscribe handler) {:session session
-                                                       :topic topic}))]
+        auth-result (when (and session topic (ifn? authorize-subscribe))
+                      (authorize-subscribe {:session session
+                                            :topic topic}))]
     (cond
       (nil? session)
       {:ok? false :reason :session-not-found}
@@ -17,7 +15,7 @@
       (nil? topic)
       {:ok? false :reason :invalid-topic}
 
-      (nil? handler)
+      (not (ifn? authorize-subscribe))
       {:ok? false :reason :subscription-rejected}
 
       (not (:ok? auth-result))
