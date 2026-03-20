@@ -36,7 +36,7 @@
 6. `read-provider registry`
 7. `observe registry`
 8. `guard`
-9. `ws-hub`, `ws-registry` и общий websocket-транспорт, если они нужны
+9. `ws-hub` и общий websocket-транспорт, если они нужны
 10. `storage resources`
 11. app-level routes (`/healthz`, `/readyz`, `/metrics`, ops/auth handlers, `ws-demo`, websocket endpoint)
 12. middleware chain
@@ -61,7 +61,7 @@
 6. `make-read-provider-registry`
 7. `make-guard` (если используется)
 8. `make-observe-registry`
-9. `make-ws-hub` и `make-ws-registry` (если используется websocket)
+9. `make-ws-hub` и `make-ws-transport-state` (если используется websocket)
 10. `make-storage-resources`
 11. `init!` upstream modules
 12. `init!` downstream modules
@@ -76,7 +76,7 @@
 2. `read-provider registry` должен быть готов до `init!` модулей;
 3. `assert-requirements!` нужно делать после инициализации модулей, но до старта HTTP;
 4. websocket transport, если он есть, должен собираться на app-level, а не внутри модуля;
-5. если используется `lcmm-ws`, модули могут в `init!` регистрировать свой экспорт для веб-сокета через `ws-registry`, но не должны управлять транспортными правилами;
+5. если используется `lcmm-ws`, websocket собирается на app-level, а модули не получают `lcmm-ws` в свои `deps` и не управляют transport-правилами;
 6. middleware chain строится уже поверх готового Ring-handler.
 
 ## 4. Канонический startup skeleton
@@ -204,9 +204,11 @@
 
 1. `:observe-registry`
 
-Если модуль экспортирует websocket-возможности через `lcmm-ws`:
+Если приложению нужен websocket:
 
-1. `:ws-registry`
+1. модулю по-прежнему не нужен `lcmm-ws` в `deps.edn`;
+2. app-level слой сам проецирует доменные события в websocket delivery;
+3. если есть входящий business flow из внешнего мира, модуль может читать app-owned ingress event из шины, а не raw websocket contract.
 
 ### 5.2 Что модуль не должен собирать сам по умолчанию
 
@@ -265,7 +267,7 @@ LCMM рекомендует разделять:
 5. provider-registry creation
 6. observe-registry creation
 7. guard creation
-8. ws-hub / ws-registry creation
+8. ws-hub / ws-transport creation
 9. storage resource creation
 10. startup checks
 11. middleware chain
@@ -275,7 +277,7 @@ LCMM рекомендует разделять:
 1. route registration через переданный router
 2. event subscriptions через переданный bus
 3. provider registration или requirement declaration
-4. websocket-export registration через переданный `ws-registry`, если websocket нужен
+4. свою бизнес-логику для WS-сценариев через обычные события шины
 5. свою бизнес-логику
 6. свой storage layer поверх переданного resource
 7. свои полезные module-level metrics

@@ -29,8 +29,8 @@
 
 Важно:
 
-1. в новой рабочей модели приложение не использует `ws-registry`;
-2. в новой рабочей модели приложение не использует `bridge` как канонический путь.
+1. в новой рабочей модели приложение работает напрямую через `hub`, `transport-state` и app-level подписки на `event-bus`;
+2. промежуточные websocket-specific registries в канонический путь не входят.
 
 ## 3. Канонический outgoing path
 
@@ -127,7 +127,7 @@
 
 1. не передавать `lcmm-ws` в модульные `deps`;
 2. не регистрировать websocket-export из `module/init!`;
-3. не делать `ws-registry` и `bridge` частью канонического happy path;
+3. не добавлять промежуточные websocket-specific registries или adapters в канонический happy path;
 4. не смешивать app-owned ingress contract и доменные события модуля.
 
 ## 8. Минимальный checklist
